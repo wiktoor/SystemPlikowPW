@@ -5,8 +5,12 @@
 
 struct Tree {
     pthread_mutex_t mutex;
+    // map to children of this Tree
     HashMap* map;
+    // the current of the node, eg. "/a/b/c/"
     char* address;
+    // pointer to the parent (or is set to NULL if this tree is the root)
+    struct Tree* parent;
 };
 
 typedef struct Tree Tree; // Let "Tree" mean the same as "struct Tree".

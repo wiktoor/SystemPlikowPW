@@ -10,4 +10,5 @@
 int main() {
     Tree *tree = tree_new();
     printf("%s\n", tree->address);
+    tree_free(tree);
 }

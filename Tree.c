@@ -12,5 +12,14 @@ Tree* tree_new() {
     result->address = (char*) malloc(2 * sizeof(char));
     result->address[0] = '/';
     result->address[1] = '\0';
+    result->parent = NULL;
     return result;
+}
+
+void tree_free(Tree *tree) {
+    pthread_mutex_destroy(&tree->mutex);
+    hmap_free(tree->map);
+    free(tree->address);
+    free(tree->parent); // ???
+    free(tree);
 }
