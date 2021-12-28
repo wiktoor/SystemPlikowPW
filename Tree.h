@@ -1,5 +1,14 @@
 #pragma once
 
+#include <pthread.h>
+#include "HashMap.h"
+
+struct Tree {
+    pthread_mutex_t mutex;
+    HashMap* map;
+    char* address;
+};
+
 typedef struct Tree Tree; // Let "Tree" mean the same as "struct Tree".
 
 Tree* tree_new();
