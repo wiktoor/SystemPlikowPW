@@ -10,7 +10,7 @@
 #define CHECK_PTR(x) do { if (!x) exit(0); } while(0)
 #define SUCCESS 0
 
-void lock_subtree(Tree *tree) {
+static void lock_subtree(Tree *tree) {
     pthread_mutex_lock(&tree->mutex);
 
     const char* key = NULL;
@@ -21,7 +21,7 @@ void lock_subtree(Tree *tree) {
     }
 }
 
-void unlock_subtree(Tree *tree) {
+static void unlock_subtree(Tree *tree) {
     const char* key = NULL;
     void* value = NULL;
     HashMapIterator it = hmap_iterator(tree->map);
@@ -32,7 +32,7 @@ void unlock_subtree(Tree *tree) {
     pthread_mutex_unlock(&tree->mutex);
 }
 
-Tree* find_tree(Tree *tree, const char* path, int* error) {
+static Tree* tree_find(Tree *tree, const char* path, int* error) {
     char component[MAX_FOLDER_NAME_LENGTH + 1];
     const char* subpath = path;
     subpath = split_path(subpath, component);
@@ -43,7 +43,7 @@ Tree* find_tree(Tree *tree, const char* path, int* error) {
         *error = ENOENT;
         return NULL;
     }
-    return find_tree(subtree, subpath, error);
+    return tree_find(subtree, subpath, error);
 }
 
 Tree* tree_new() {
@@ -75,7 +75,7 @@ char* tree_list(Tree* tree, const char* path) {
 
     int error = SUCCESS;
     lock_subtree(tree);
-    Tree* node = find_tree(tree, path, &error);
+    Tree* node = tree_find(tree, path, &error);
     if (error != SUCCESS) {
         unlock_subtree(tree);
         return NULL;
@@ -93,7 +93,7 @@ int tree_create(Tree* tree, const char* path) {
     char* path_to_parent = make_path_to_parent(path, component);
     int error = SUCCESS;
     lock_subtree(tree);
-    Tree* parent = find_tree(tree, path_to_parent, &error);
+    Tree* parent = tree_find(tree, path_to_parent, &error);
     if (error != SUCCESS) {
         free(path_to_parent);
         unlock_subtree(tree);
