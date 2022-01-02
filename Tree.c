@@ -5,6 +5,7 @@
 #include "path_utils.h"
 #include <pthread.h>
 #include <stdlib.h>
+#include <stdio.h> // do testowania
 
 #define CHECK_PTR(x) do { if (!x) exit(0); } while(0)
 #define SUCCESS 0
@@ -39,7 +40,7 @@ static Tree* tree_find(Tree *tree, const char* path, int* error) {
 
     Tree* subtree = (Tree*) hmap_get(tree->map, component);
     if (!subtree) {
-        *error = ENOENT;
+        if (error) *error = ENOENT;
         return NULL;
     }
     return tree_find(subtree, subpath, error);
@@ -134,6 +135,59 @@ int tree_remove(Tree* tree, const char* path) {
 
     hmap_remove(node->parent->map, component);
     tree_free(node);
+
+    unlock_subtree(tree);
+
+    return SUCCESS;
+}
+
+int tree_move(Tree* tree, const char* source, const char* target) {
+    if (!is_path_valid(source) || !is_path_valid(target)) return EINVAL;
+
+    int error = SUCCESS;
+    lock_subtree(tree);
+
+    // check if target already exists
+    Tree* target_tree = tree_find(tree, target, NULL);
+    if (target_tree) {
+        unlock_subtree(tree);
+        return EEXIST;
+    }
+
+    // find the name of source folder
+    char source_name[MAX_FOLDER_NAME_LENGTH + 1];
+    char* path_to_source_parent = make_path_to_parent(source, source_name);
+    if (!path_to_source_parent) {
+        unlock_subtree(tree);
+        return EBUSY;
+    }
+    free(path_to_source_parent);
+
+    // find tree_source
+    Tree* tree_source = tree_find(tree, source, &error);
+    if (error != SUCCESS) {
+        unlock_subtree(tree);
+        return error;
+    }
+
+    // find target's parent and name
+    char target_name[MAX_FOLDER_NAME_LENGTH + 1];
+    char* path_to_target_parent = make_path_to_parent(target, target_name);
+    Tree* target_parent = tree_find(tree, path_to_target_parent, &error);
+    if (path_to_target_parent) free(path_to_target_parent);
+    if (error != SUCCESS) {
+        unlock_subtree(tree);
+        return error;
+    }
+
+    // remove source from their parent's map
+    hmap_remove(tree_source->parent->map, source_name);
+
+    // insert tree_source into target's parent's map
+    hmap_insert(target_parent->map, target_name, tree_source);
+
+    // set tree_source's parent as new parent
+    tree_source->parent = target_parent;
 
     unlock_subtree(tree);
 
