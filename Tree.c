@@ -5,13 +5,16 @@
 #include <pthread.h>
 #include <stdlib.h>
 
+#define CHECK_PTR(x) do { if (!x) exit(0); } while(0)
+
 Tree* tree_new() {
     Tree* result = (Tree*) malloc(sizeof(Tree));
+    CHECK_PTR(result);
+
     pthread_mutex_init(&result->mutex, NULL);
     result->map = hmap_new();
-    result->address = (char*) malloc(2 * sizeof(char));
-    result->address[0] = '/';
-    result->address[1] = '\0';
+    CHECK_PTR(result->map);
+    
     result->parent = NULL;
     return result;
 }
@@ -25,6 +28,5 @@ void tree_free(Tree *tree) {
         tree_free(value);
     }
     hmap_free(tree->map);
-    free(tree->address);
     free(tree);
 }
