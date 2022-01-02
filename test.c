@@ -8,7 +8,7 @@
 #include <unistd.h>
 
 void test_tree_create(Tree* tree, const char* path) {
-    printf("%d\n", tree_create(tree, path));
+    printf("tree_create(%s): %d\n", path, tree_create(tree, path));
 }
 
 void test_tree_list(Tree* tree, const char* path) {
@@ -20,6 +20,10 @@ void test_tree_list(Tree* tree, const char* path) {
     else {
         printf("Wierzchołek \"%s\" nie istnieje\n", path);
     }
+}
+
+void test_tree_remove(Tree* tree, const char* path) {
+    printf("tree_remove(%s): %d\n", path, tree_remove(tree, path));
 }
 
 int main() {
@@ -34,6 +38,9 @@ int main() {
     test_tree_list(tree, "/");
     test_tree_list(tree, "/a/");
     test_tree_list(tree, "/a/b/c/d/");
+
+    test_tree_remove(tree, "/a/");
+    test_tree_remove(tree, "/a/b/");
 
     tree_free(tree);
 }

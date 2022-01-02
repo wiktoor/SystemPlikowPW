@@ -5,7 +5,6 @@
 #include "path_utils.h"
 #include <pthread.h>
 #include <stdlib.h>
-#include <stdio.h> // do testowania
 
 #define CHECK_PTR(x) do { if (!x) exit(0); } while(0)
 #define SUCCESS 0
@@ -107,5 +106,36 @@ int tree_create(Tree* tree, const char* path) {
     unlock_subtree(tree);
 
     free(path_to_parent);
+    return SUCCESS;
+}
+
+int tree_remove(Tree* tree, const char* path) {
+    if (!is_path_valid(path)) return EINVAL;
+    char* path_to_parent = make_path_to_parent(path, NULL);
+    if (!path_to_parent) return EBUSY;
+    else free(path_to_parent);
+
+    int error = SUCCESS;
+    lock_subtree(tree);
+    Tree* node = tree_find(tree, path, &error);
+    if (error != SUCCESS) {
+        unlock_subtree(tree);
+        return error;
+    }
+
+    if (hmap_size(node->map)) {
+        unlock_subtree(tree);
+        return ENOTEMPTY;
+    }
+
+    char component[MAX_FOLDER_NAME_LENGTH + 1];
+    char* parent_path = make_path_to_parent(path, component);
+    free(parent_path);
+
+    hmap_remove(node->parent->map, component);
+    tree_free(node);
+
+    unlock_subtree(tree);
+
     return SUCCESS;
 }
