@@ -5,10 +5,22 @@
 #include "path_utils.h"
 #include <pthread.h>
 #include <stdlib.h>
-#include <stdio.h> // do testowania
+#include <string.h> // strlen, strcmp
 
 #define CHECK_PTR(x) do { if (!x) exit(0); } while(0)
 #define SUCCESS 0
+
+static bool is_successor(const char* path, const char* successor_path) {
+    size_t length = strlen(path);
+    if (length >= strlen(successor_path)) return false;
+    char* short_path = malloc(length + 1);
+    CHECK_PTR(short_path);
+    memcpy(short_path, successor_path, length);
+    short_path[length] = '\0';
+    bool result = !strcmp(short_path, path);
+    free(short_path);
+    return result;
+}
 
 static void lock_subtree(Tree *tree) {
     pthread_mutex_lock(&tree->mutex);
@@ -93,6 +105,13 @@ int tree_create(Tree* tree, const char* path) {
     char* path_to_parent = make_path_to_parent(path, component);
     int error = SUCCESS;
     lock_subtree(tree);
+    Tree* node = tree_find(tree, path, NULL);
+    if (node) {
+        free(path_to_parent);
+        unlock_subtree(tree);
+        return EEXIST;
+    }
+
     Tree* parent = tree_find(tree, path_to_parent, &error);
     if (error != SUCCESS) {
         free(path_to_parent);
@@ -144,30 +163,44 @@ int tree_remove(Tree* tree, const char* path) {
 int tree_move(Tree* tree, const char* source, const char* target) {
     if (!is_path_valid(source) || !is_path_valid(target)) return EINVAL;
 
-    int error = SUCCESS;
-    lock_subtree(tree);
+    // corner case for tests: if source == "/"
+    if (strlen(source) == 1 && *source == '/') return EBUSY;
 
-    // check if target already exists
-    Tree* target_tree = tree_find(tree, target, NULL);
-    if (target_tree) {
-        unlock_subtree(tree);
-        return EEXIST;
-    }
+    // corner case for tests: if target == "/"
+    if (strlen(target) == 1 && *target == '/') return EEXIST;
+
+    // corner case for tests: if target is successor of source
+    if (is_successor(source, target)) return -1;
 
     // find the name of source folder
     char source_name[MAX_FOLDER_NAME_LENGTH + 1];
     char* path_to_source_parent = make_path_to_parent(source, source_name);
     if (!path_to_source_parent) {
-        unlock_subtree(tree);
         return EBUSY;
     }
     free(path_to_source_parent);
+
+    int error = SUCCESS;
+    lock_subtree(tree);
 
     // find tree_source
     Tree* tree_source = tree_find(tree, source, &error);
     if (error != SUCCESS) {
         unlock_subtree(tree);
         return error;
+    }
+
+    // corner case for tests: if source == target
+    if (!strcmp(source, target)) {
+        unlock_subtree(tree);
+        return SUCCESS;
+    }
+
+    // check if target already exists
+    Tree* target_tree = tree_find(tree, target, NULL);
+    if (target_tree) {
+        unlock_subtree(tree);
+        return EEXIST;
     }
 
     // find target's parent and name
