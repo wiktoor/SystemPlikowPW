@@ -3,10 +3,16 @@
 #include <pthread.h>
 #include "HashMap.h"
 
+#define READING 0
+#define WRITING 1
+
 struct Tree {
-    pthread_mutex_t mutex;
     // map to children of this Tree
     HashMap* map;
+    pthread_mutex_t mutex;
+    pthread_cond_t read_cond, write_cond, ref_cond;
+    size_t read_wait, write_wait, working, ref_wait, ref;
+    bool operation;
     // pointer to the parent (or is set to NULL if this tree is the root)
     struct Tree* parent;
 };
