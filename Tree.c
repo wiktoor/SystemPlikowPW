@@ -208,25 +208,23 @@ int tree_create(Tree* tree, const char* path) {
     char component[MAX_FOLDER_NAME_LENGTH + 1];
     char* path_to_parent = make_path_to_parent(path, component);
     Tree* parent = read_write_lock_path(tree, path_to_parent);
-    if (parent && parent->parent) read_unlock_predecessors(parent->parent);
+    free(path_to_parent);
+    if (!parent) return ENOENT;
+
+    // now we know that parent exists and is write_locked, thus, we can make operations on it
+    // first, we unlock its predecessors (other than him), so other processes can use them
+    if (parent->parent) read_unlock_predecessors(parent->parent);
     
-    if (parent && hmap_get(parent->map, component)) {
+    if (hmap_get(parent->map, component)) {
         write_unlock(parent);
-        free(path_to_parent);
         return EEXIST;
     }
-    else if (!parent) {
-        free(path_to_parent);
-        return ENOENT;
-    }
 
-    // now parent is write_locked, we can make operations on it
     Tree* new = tree_new();
     hmap_insert(parent->map, component, new);
     new->parent = parent;
 
     write_unlock(parent);
-    free(path_to_parent);
     return SUCCESS;
 }
 
