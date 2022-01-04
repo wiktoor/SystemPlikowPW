@@ -24,64 +24,39 @@ static bool is_successor(const char* path, const char* successor_path) {
 
 static void read_lock(Tree* tree) {
     pthread_mutex_lock(&tree->mutex);
-    
-    // if some process is waiting for the ref counter to be zero,
-    // then we wait, in order not to starve them
-    while (tree->ref_wait) {
+
+    if (tree->operation == WRITING || tree->write_wait) {
         tree->read_wait++;
         pthread_cond_wait(&tree->read_cond, &tree->mutex);
         tree->read_wait--;
     }
 
-    // if there's a writer working or waiting
-    while (tree->working && (tree->operation == WRITING || tree->write_wait)) {
-        tree->read_wait++;
-        pthread_cond_wait(&tree->read_cond, &tree->mutex);
-        tree->read_wait--;
-    }
-
-    // now we procede to work and wake other readers waiting on read_cond
-    tree->operation = READING;
     tree->working++;
     pthread_cond_signal(&tree->read_cond);
 }
 
 static void read_unlock(Tree* tree) {
-    // note that at this moment, this tree is read_locked
-
-    // if we are the last reader, we wake a writer
+    // note that at this moment we have tree's mutex
     if (--tree->working == 0) pthread_cond_signal(&tree->write_cond);
-
     pthread_mutex_unlock(&tree->mutex);
 }
 
 static void write_lock(Tree* tree) {
     pthread_mutex_lock(&tree->mutex);
-    
-    // if some process is waiting for the ref counter to be zero,
-    // then we wait, in order not to starve them
-    while (tree->ref_wait) {
+
+    if (tree->working) {
         tree->write_wait++;
         pthread_cond_wait(&tree->write_cond, &tree->mutex);
         tree->write_wait--;
     }
 
-    // if there's a writer working or waiting
-    while (tree->working) {
-        tree->write_wait++;
-        pthread_cond_wait(&tree->write_cond, &tree->mutex);
-        tree->write_wait--;
-    }
-
-    // now we procede to work and wake other readers waiting on read_cond
     tree->operation = WRITING;
     tree->working++;
 }
 
 static void write_unlock(Tree* tree) {
-    // note that at this moment, this tree is write_locked
-
-    tree->operation = WRITING;
+    // note that at this moment we have tree's mutex
+    tree->operation = READING;
     tree->working--;
 
     if (tree->read_wait) pthread_cond_signal(&tree->read_cond);
@@ -148,10 +123,8 @@ Tree* tree_new() {
     pthread_mutex_init(&result->mutex, NULL);
     pthread_cond_init(&result->read_cond, NULL);
     pthread_cond_init(&result->write_cond, NULL);
-    pthread_cond_init(&result->ref_cond, NULL);
 
-    result->read_wait = result->write_wait = result->ref_wait = 0;
-    result->working = result->ref = 0;
+    result->read_wait = result->write_wait = result->working = 0;
     result->operation = READING;
     result->parent = NULL;
 
@@ -181,7 +154,6 @@ void tree_free(Tree *tree) {
     pthread_mutex_destroy(&tree->mutex);
     pthread_cond_destroy(&tree->read_cond);
     pthread_cond_destroy(&tree->write_cond);
-    pthread_cond_destroy(&tree->ref_cond);
     free(tree);
 }
 
