@@ -132,18 +132,6 @@ static Tree* read_lock_path(Tree* tree, const char* path) {
     return read_lock_path(subtree, subpath);
 }
 
-// Tree* tree_new() {
-//     Tree* result = (Tree*) malloc(sizeof(Tree));
-//     CHECK_PTR(result);
-
-//     pthread_mutex_init(&result->mutex, NULL);
-//     result->map = hmap_new();
-//     CHECK_PTR(result->map);
-
-//     result->parent = NULL;
-//     return result;
-// }
-
 Tree* tree_new() {
     Tree* result = (Tree*) malloc(sizeof(Tree));
     CHECK_PTR(result);
@@ -161,18 +149,6 @@ Tree* tree_new() {
 
     return result;
 }
-
-// void tree_free(Tree *tree) {
-//     pthread_mutex_destroy(&tree->mutex);
-//     const char* key = NULL;
-//     void* value = NULL;
-//     HashMapIterator it = hmap_iterator(tree->map);
-//     while (hmap_next(tree->map, &it, &key, &value)) {
-//         tree_free(value);
-//     }
-//     hmap_free(tree->map);
-//     free(tree);
-// }
 
 void tree_free(Tree *tree) {
     const char* key = NULL;
@@ -204,36 +180,55 @@ void tree_free(Tree *tree) {
 //     return result;
 // }
 
-// int tree_create(Tree* tree, const char* path) {
-//     if (!is_path_valid(path)) return EINVAL;
+// read_locks whole path, except for the last node, which is write_locked
+// returns the node that the path points to
+// if such path doesn't exist, returns NULL and rollbacks all read_locks
+static Tree* read_write_lock_path(Tree* tree, const char* path) {
+    char component[MAX_FOLDER_NAME_LENGTH + 1];
+    const char* subpath = path;
+    subpath = split_path(subpath, component);
 
-//     char component[MAX_FOLDER_NAME_LENGTH + 1];
-//     char* path_to_parent = make_path_to_parent(path, component);
-//     int error = SUCCESS;
-//     lock_subtree(tree);
-//     Tree* node = tree_find(tree, path, NULL);
-//     if (node) {
-//         free(path_to_parent);
-//         unlock_subtree(tree);
-//         return EEXIST;
-//     }
+    if (!subpath) {
+        write_lock(tree);
+        return tree;
+    }
+    read_lock(tree);
 
-//     Tree* parent = tree_find(tree, path_to_parent, &error);
-//     if (error != SUCCESS) {
-//         free(path_to_parent);
-//         unlock_subtree(tree);
-//         return error;
-//     }
+    Tree* subtree = (Tree*) hmap_get(tree->map, component);
+    if (!subtree) {
+        read_unlock_predecessors(tree);
+        return NULL;
+    }
+    return read_write_lock_path(subtree, subpath);
+}
 
-//     Tree* new = tree_new();
-//     hmap_insert(parent->map, component, new);
-//     new->parent = parent;
+int tree_create(Tree* tree, const char* path) {
+    if (!is_path_valid(path)) return EINVAL;
 
-//     unlock_subtree(tree);
+    char component[MAX_FOLDER_NAME_LENGTH + 1];
+    char* path_to_parent = make_path_to_parent(path, component);
+    Tree* parent = read_write_lock_path(tree, path_to_parent);
+    if (parent && parent->parent) read_unlock_predecessors(parent->parent);
+    
+    if (parent && hmap_get(parent->map, component)) {
+        write_unlock(parent);
+        free(path_to_parent);
+        return EEXIST;
+    }
+    else if (!parent) {
+        free(path_to_parent);
+        return ENOENT;
+    }
 
-//     free(path_to_parent);
-//     return SUCCESS;
-// }
+    // now parent is write_locked, we can make operations on it
+    Tree* new = tree_new();
+    hmap_insert(parent->map, component, new);
+    new->parent = parent;
+
+    write_unlock(parent);
+    free(path_to_parent);
+    return SUCCESS;
+}
 
 // int tree_remove(Tree* tree, const char* path) {
 //     if (!is_path_valid(path)) return EINVAL;

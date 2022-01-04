@@ -7,9 +7,9 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-// void test_tree_create(Tree* tree, const char* path) {
-//     printf("tree_create(%s): %d\n", path, tree_create(tree, path));
-// }
+void test_tree_create(Tree* tree, const char* path) {
+    printf("tree_create(%s): %d\n", path, tree_create(tree, path));
+}
 
 // void test_tree_list(Tree* tree, const char* path) {
 //     char* result = tree_list(tree, path);
@@ -35,12 +35,12 @@
 int main() {
     Tree *tree = tree_new();
 
-    // test_tree_create(tree, "/a/");
-    // test_tree_create(tree, "/b/c/");
-    // test_tree_create(tree, "/c/");
-    // test_tree_create(tree, "/a/b/");
-    // test_tree_create(tree, "/a/c/");
-    // test_tree_create(tree, "/c/d/");
+    test_tree_create(tree, "/a/");
+    test_tree_create(tree, "/b/c/");
+    test_tree_create(tree, "/c/");
+    test_tree_create(tree, "/a/b/");
+    test_tree_create(tree, "/a/c/");
+    test_tree_create(tree, "/c/d/");
 
     // test_tree_list(tree, "/");
     // test_tree_list(tree, "/a/");
