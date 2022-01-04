@@ -114,24 +114,6 @@ static void read_unlock_predecessors(Tree* tree) {
     if (tree->parent) read_unlock(tree->parent);
 }
 
-// read_locks whole path, returns the node that the path points to
-// if such path doesn't exist, returns NULL and rollbacks all read_locks
-static Tree* read_lock_path(Tree* tree, const char* path) {
-    char component[MAX_FOLDER_NAME_LENGTH + 1];
-    const char* subpath = path;
-    subpath = split_path(subpath, component);
-
-    read_lock(tree);
-    if (!subpath) return tree;
-
-    Tree* subtree = (Tree*) hmap_get(tree->map, component);
-    if (!subtree) {
-        read_unlock_predecessors(tree);
-        return NULL;
-    }
-    return read_lock_path(subtree, subpath);
-}
-
 Tree* tree_new() {
     Tree* result = (Tree*) malloc(sizeof(Tree));
     CHECK_PTR(result);
@@ -164,21 +146,38 @@ void tree_free(Tree *tree) {
     free(tree);
 }
 
-// char* tree_list(Tree* tree, const char* path) {
-//     if (!is_path_valid(path)) return NULL;
+// read_locks whole path, returns the node that the path points to
+// if such path doesn't exist, returns NULL and rollbacks all read_locks
+static Tree* read_lock_path(Tree* tree, const char* path) {
+    char component[MAX_FOLDER_NAME_LENGTH + 1];
+    const char* subpath = path;
+    subpath = split_path(subpath, component);
 
-//     int error = SUCCESS;
-//     lock_subtree(tree);
-//     Tree* node = tree_find(tree, path, &error);
-//     if (error != SUCCESS) {
-//         unlock_subtree(tree);
-//         return NULL;
-//     }
-//     char* result = make_map_contents_string(node->map);
-//     unlock_subtree(tree);
+    read_lock(tree);
+    if (!subpath) return tree;
 
-//     return result;
-// }
+    Tree* subtree = (Tree*) hmap_get(tree->map, component);
+    if (!subtree) {
+        read_unlock_predecessors(tree);
+        return NULL;
+    }
+    return read_lock_path(subtree, subpath);
+}
+
+char* tree_list(Tree* tree, const char* path) {
+    if (!is_path_valid(path)) return NULL;
+
+    Tree* node = read_lock_path(tree, path);
+    if (!node) return NULL;
+
+    // now we know that the node exists and is read_locked, thus, we can make operations on it
+    // first, we unlock its predecessors (other than him), so other processes can use them
+    if (node->parent) read_unlock_predecessors(node->parent);
+
+    char* result = make_map_contents_string(node->map);
+    read_unlock(node);
+    return result;
+}
 
 // read_locks whole path, except for the last node, which is write_locked
 // returns the node that the path points to
