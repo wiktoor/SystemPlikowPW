@@ -41,7 +41,7 @@ static void read_unlock(Tree* tree) {
     pthread_mutex_unlock(&tree->mutex);
 
     if (--tree->working == 0) pthread_cond_signal(&tree->write_cond);
-    
+
     pthread_mutex_unlock(&tree->mutex);
 }
 
@@ -107,6 +107,30 @@ static void write_unlock(Tree* tree) {
 //     }
 //     return tree_find(subtree, subpath, error);
 // }
+
+// read_unlocks the tree and all its predecessors
+static void read_unlock_predecessors(Tree* tree) {
+    read_unlock(tree);
+    if (tree->parent) read_unlock(tree->parent);
+}
+
+// read_locks whole path, returns the node that the path points to
+// if such path doesn't exist, returns NULL and rollbacks all read_locks
+static Tree* read_lock_path(Tree* tree, const char* path) {
+    char component[MAX_FOLDER_NAME_LENGTH + 1];
+    const char* subpath = path;
+    subpath = split_path(subpath, component);
+
+    read_lock(tree);
+    if (!subpath) return tree;
+
+    Tree* subtree = (Tree*) hmap_get(tree->map, component);
+    if (!subtree) {
+        read_unlock_predecessors(tree);
+        return NULL;
+    }
+    return read_lock_path(subtree, subpath);
+}
 
 // Tree* tree_new() {
 //     Tree* result = (Tree*) malloc(sizeof(Tree));
