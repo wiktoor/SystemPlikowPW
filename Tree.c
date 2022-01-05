@@ -111,7 +111,7 @@ static void write_unlock(Tree* tree) {
 // read_unlocks the tree and all its predecessors
 static void read_unlock_predecessors(Tree* tree) {
     read_unlock(tree);
-    if (tree->parent) read_unlock(tree->parent);
+    if (tree->parent) read_unlock_predecessors(tree->parent);
 }
 
 Tree* tree_new() {
@@ -257,6 +257,41 @@ int tree_create(Tree* tree, const char* path) {
 
 //     return SUCCESS;
 // }
+
+int tree_remove(Tree* tree, const char* path) {
+    if (!is_path_valid(path)) return EINVAL;
+
+    char component[MAX_FOLDER_NAME_LENGTH + 1];
+    char* path_to_parent = make_path_to_parent(path, component);
+    if (!path_to_parent) return EBUSY;
+    Tree* parent = read_write_lock_path(tree, path_to_parent);
+    free(path_to_parent);
+    if (!parent) return ENOENT;
+    
+    // now we know that parent exists and is write_locked, thus, we can make operations on it
+    // first, we unlock its predecessors (other than him), so other processes can use them
+    if (parent->parent) read_unlock_predecessors(parent->parent);
+
+    Tree* node = hmap_get(parent->map, component);
+    if (!node) {
+        write_unlock(parent);
+        return ENOENT;
+    }
+
+    write_lock(node);
+    if (hmap_size(node->map)) {
+        write_unlock(node);
+        write_unlock(parent);
+        return ENOTEMPTY;
+    }
+
+    hmap_remove(parent->map, component);
+    tree_free(node);
+
+    write_unlock(parent);
+
+    return SUCCESS;
+}
 
 // int tree_move(Tree* tree, const char* source, const char* target) {
 //     if (!is_path_valid(source) || !is_path_valid(target)) return EINVAL;

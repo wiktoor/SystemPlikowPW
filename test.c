@@ -22,9 +22,9 @@ void test_tree_list(Tree* tree, const char* path) {
     }
 }
 
-// void test_tree_remove(Tree* tree, const char* path) {
-//     printf("tree_remove(%s): %d\n", path, tree_remove(tree, path));
-// }
+void test_tree_remove(Tree* tree, const char* path) {
+    printf("tree_remove(%s): %d\n", path, tree_remove(tree, path));
+}
 
 // void test_tree_move(Tree* tree, const char* source, const char* target) {
 //     printf("tree_move(source = %s, target = %s): %d\n", source, target, tree_move(tree, source, target));
@@ -46,8 +46,8 @@ int main() {
     test_tree_list(tree, "/a/");
     test_tree_list(tree, "/a/b/c/d/");
 
-    // test_tree_remove(tree, "/a/");
-    // test_tree_remove(tree, "/a/b/");
+    test_tree_remove(tree, "/a/");
+    test_tree_remove(tree, "/a/b/");
 
     // test_tree_list(tree, "/a/");
     // test_tree_list(tree, "/c/");
