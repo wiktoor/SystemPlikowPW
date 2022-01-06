@@ -6,21 +6,10 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h> // strlen, strcmp
+#include <stdio.h> // for test
 
 #define CHECK_PTR(x) do { if (!x) exit(0); } while(0)
 #define SUCCESS 0
-
-static bool is_successor(const char* path, const char* successor_path) {
-    size_t length = strlen(path);
-    if (length >= strlen(successor_path)) return false;
-    char* short_path = malloc(length + 1);
-    CHECK_PTR(short_path);
-    memcpy(short_path, successor_path, length);
-    short_path[length] = '\0';
-    bool result = !strcmp(short_path, path);
-    free(short_path);
-    return result;
-}
 
 static void read_lock(Tree* tree) {
     pthread_mutex_lock(&tree->mutex);
@@ -71,42 +60,6 @@ static void write_unlock(Tree* tree) {
 
     pthread_mutex_unlock(&tree->mutex);
 }
-
-// static void lock_subtree(Tree *tree) {
-//     pthread_mutex_lock(&tree->mutex);
-
-//     const char* key = NULL;
-//     void* value = NULL;
-//     HashMapIterator it = hmap_iterator(tree->map);
-//     while (hmap_next(tree->map, &it, &key, &value)) {
-//         lock_subtree(value);
-//     }
-// }
-
-// static void unlock_subtree(Tree *tree) {
-//     const char* key = NULL;
-//     void* value = NULL;
-//     HashMapIterator it = hmap_iterator(tree->map);
-//     while (hmap_next(tree->map, &it, &key, &value)) {
-//         unlock_subtree(value);
-//     }
-
-//     pthread_mutex_unlock(&tree->mutex);
-// }
-
-// static Tree* tree_find(Tree *tree, const char* path, int* error) {
-//     char component[MAX_FOLDER_NAME_LENGTH + 1];
-//     const char* subpath = path;
-//     subpath = split_path(subpath, component);
-//     if (!subpath) return tree;
-
-//     Tree* subtree = (Tree*) hmap_get(tree->map, component);
-//     if (!subtree) {
-//         if (error) *error = ENOENT;
-//         return NULL;
-//     }
-//     return tree_find(subtree, subpath, error);
-// }
 
 // read_unlocks the tree and all its predecessors
 static void read_unlock_predecessors(Tree* tree) {
@@ -227,37 +180,6 @@ int tree_create(Tree* tree, const char* path) {
     return SUCCESS;
 }
 
-// int tree_remove(Tree* tree, const char* path) {
-//     if (!is_path_valid(path)) return EINVAL;
-//     char* path_to_parent = make_path_to_parent(path, NULL);
-//     if (!path_to_parent) return EBUSY;
-//     else free(path_to_parent);
-
-//     int error = SUCCESS;
-//     lock_subtree(tree);
-//     Tree* node = tree_find(tree, path, &error);
-//     if (error != SUCCESS) {
-//         unlock_subtree(tree);
-//         return error;
-//     }
-
-//     if (hmap_size(node->map)) {
-//         unlock_subtree(tree);
-//         return ENOTEMPTY;
-//     }
-
-//     char component[MAX_FOLDER_NAME_LENGTH + 1];
-//     char* parent_path = make_path_to_parent(path, component);
-//     free(parent_path);
-
-//     hmap_remove(node->parent->map, component);
-//     tree_free(node);
-
-//     unlock_subtree(tree);
-
-//     return SUCCESS;
-// }
-
 int tree_remove(Tree* tree, const char* path) {
     if (!is_path_valid(path)) return EINVAL;
 
@@ -293,69 +215,212 @@ int tree_remove(Tree* tree, const char* path) {
     return SUCCESS;
 }
 
-// int tree_move(Tree* tree, const char* source, const char* target) {
-//     if (!is_path_valid(source) || !is_path_valid(target)) return EINVAL;
+static bool is_root(const char* path) {
+    return !strcmp("/", path);
+}
 
-//     // corner case for tests: if source == "/"
-//     if (strlen(source) == 1 && *source == '/') return EBUSY;
+static bool is_successor(const char* path, const char* successor_path) {
+    size_t length = strlen(path);
+    if (length >= strlen(successor_path)) return false;
+    char* short_path = malloc(length + 1);
+    CHECK_PTR(short_path);
+    memcpy(short_path, successor_path, length);
+    short_path[length] = '\0';
+    bool result = !strcmp(short_path, path);
+    free(short_path);
+    return result;
+}
 
-//     // corner case for tests: if target == "/"
-//     if (strlen(target) == 1 && *target == '/') return EEXIST;
+static char* rest_path(const char* path, const char* successor_path) {
+    size_t path_length = strlen(path), successor_path_length = strlen(successor_path);
+    size_t rest_path_length = successor_path_length - path_length + 1;
+    char* result = malloc(rest_path_length + 1);
+    CHECK_PTR(result);
+    memcpy(result, successor_path + path_length - 1, rest_path_length);
+    result[rest_path_length] = '\0';
+    return result;
+}
 
-//     // corner case for tests: if target is successor of source
-//     if (is_successor(source, target)) return -1;
+// read_unlocks the tree and all its predecessors
+static void read_unlock_predecessors_until_root(Tree* tree, Tree* root) {
+    if (tree == root) return;
+    read_unlock(tree);
+    if (tree->parent) read_unlock_predecessors_until_root(tree->parent, root);
+}
 
-//     // find the name of source folder
-//     char source_name[MAX_FOLDER_NAME_LENGTH + 1];
-//     char* path_to_source_parent = make_path_to_parent(source, source_name);
-//     if (!path_to_source_parent) {
-//         return EBUSY;
-//     }
-//     free(path_to_source_parent);
+static Tree* read_write_lock_path_root_excluding(Tree* tree, const char* path, Tree* root) {
+    char component[MAX_FOLDER_NAME_LENGTH + 1];
+    const char* subpath = path;
+    subpath = split_path(subpath, component);
 
-//     int error = SUCCESS;
-//     lock_subtree(tree);
+    if (tree != root) {
+        if (!subpath) {
+            write_lock(tree);
+            return tree;
+        }
+        read_lock(tree);
+    }
 
-//     // find tree_source
-//     Tree* tree_source = tree_find(tree, source, &error);
-//     if (error != SUCCESS) {
-//         unlock_subtree(tree);
-//         return error;
-//     }
+    Tree* subtree = (Tree*) hmap_get(tree->map, component);
+    if (!subtree) {
+        read_unlock_predecessors_until_root(tree, root);
+        return NULL;
+    }
+    return read_write_lock_path_root_excluding(subtree, subpath, root);
+}
 
-//     // corner case for tests: if source == target
-//     if (!strcmp(source, target)) {
-//         unlock_subtree(tree);
-//         return SUCCESS;
-//     }
+static void write_lock_subtree(Tree* tree, bool lock_root) {
+    if (lock_root) write_lock(tree);
 
-//     // check if target already exists
-//     Tree* target_tree = tree_find(tree, target, NULL);
-//     if (target_tree) {
-//         unlock_subtree(tree);
-//         return EEXIST;
-//     }
+    const char* key = NULL;
+    void* value = NULL;
+    HashMapIterator it = hmap_iterator(tree->map);
+    while (hmap_next(tree->map, &it, &key, &value)) {
+        write_lock_subtree(value, true);
+    }
+}
 
-//     // find target's parent and name
-//     char target_name[MAX_FOLDER_NAME_LENGTH + 1];
-//     char* path_to_target_parent = make_path_to_parent(target, target_name);
-//     Tree* target_parent = tree_find(tree, path_to_target_parent, &error);
-//     if (path_to_target_parent) free(path_to_target_parent);
-//     if (error != SUCCESS) {
-//         unlock_subtree(tree);
-//         return error;
-//     }
+static void write_unlock_subtree(Tree* tree, bool unlock_root) {
+    const char* key = NULL;
+    void* value = NULL;
+    HashMapIterator it = hmap_iterator(tree->map);
+    while (hmap_next(tree->map, &it, &key, &value)) {
+        write_unlock_subtree(value, true);
+    }
 
-//     // remove source from their parent's map
-//     hmap_remove(tree_source->parent->map, source_name);
+    if (unlock_root) write_unlock(tree);
+}
 
-//     // insert tree_source into target's parent's map
-//     hmap_insert(target_parent->map, target_name, tree_source);
+int tree_move(Tree* tree, const char* source, const char* target) {
+    if (!is_path_valid(source) || !is_path_valid(target)) return EINVAL;
 
-//     // set tree_source's parent as new parent
-//     tree_source->parent = target_parent;
+    // corner case for tests: if source == "/"
+    if (is_root(source)) return EBUSY;
 
-//     unlock_subtree(tree);
+    // corner case for tests: if target == "/"
+    if (is_root(target)) return EEXIST;
 
-//     return SUCCESS;
-// }
+    // corner case for tests: if target is successor of source
+    if (is_successor(source, target)) return -1;
+
+    // find the name of source folder and its parent
+    char source_name[MAX_FOLDER_NAME_LENGTH + 1];
+    char* path_to_source_parent = make_path_to_parent(source, source_name);
+    if (!path_to_source_parent) return EBUSY; // we don't need to check that: we did that earlier
+
+    Tree* source_parent = read_write_lock_path(tree, path_to_source_parent);
+    if (!source_parent) return ENOENT; // we don't need to check that: we did that earlier
+
+    // now we know that source_parent exists and is write_locked, thus, we can make operations on it
+    // first, we unlock its predecessors (other than him), so other processes can use them
+    if (source_parent->parent) read_unlock_predecessors(source_parent->parent);
+
+    Tree* source_node = hmap_get(source_parent->map, source_name);
+    if (!source_node) {
+        free(path_to_source_parent);
+        write_unlock(source_parent);
+        return ENOENT;
+    }
+    else if (!strcmp(source, target)) { // we are moving the same node to the same place
+        free(path_to_source_parent);
+        write_unlock(source_parent);
+        return SUCCESS;
+    }
+    write_lock(source_node);
+
+    // kłopoty
+
+    char target_name[MAX_FOLDER_NAME_LENGTH + 1];
+    char* path_to_target_parent = make_path_to_parent(target, target_name);
+    if (!path_to_target_parent) {
+        free(path_to_source_parent);
+        write_unlock(source_node);
+        write_unlock(source_parent);
+        return ENOENT;
+    }
+
+    // we have three different scenarios:
+    // (1) source and target have same parent
+    if (!strcmp(path_to_source_parent, path_to_target_parent)) {
+        free(path_to_source_parent);
+        free(path_to_target_parent);
+        if (hmap_get(source_parent->map, target_name)) {
+            write_unlock(source_node);
+            write_unlock(source_parent);
+            return EEXIST;
+        }
+        write_lock_subtree(source_node, false); // we write_lock source_node's subtree (source_node excluded, because it's already write_locked)
+        hmap_remove(source_parent->map, source_name);
+        hmap_insert(source_parent->map, target_name, source_node);
+        write_unlock_subtree(source_node, true); // we write_unlock source_node's subtree (source_node included)
+        write_unlock(source_parent);
+        return SUCCESS;
+    }
+
+    // (2) target_parent is a successor of source_parent
+    if (is_successor(path_to_source_parent, path_to_target_parent)) {
+        char* relative_path = rest_path(path_to_source_parent, path_to_target_parent);
+        Tree* target_parent = read_write_lock_path_root_excluding(source_parent, relative_path, source_parent);
+        free(path_to_source_parent);
+        free(path_to_target_parent);
+        free(relative_path);
+        if (!target_parent) {
+            write_unlock(source_node);
+            write_unlock(source_parent);
+            return ENOENT;
+        }
+
+        // now we know that target_parent exists and is write_locked, thus, we can make operations on it
+        // first, we unlock its predecessors until source_parent (other than him), so other processes can use them
+        if (target_parent->parent) read_unlock_predecessors_until_root(target_parent->parent, source_parent);
+
+        if (hmap_get(target_parent->map, target_name)) {
+            write_unlock(source_node);
+            write_unlock(source_parent);
+            write_unlock(target_parent);
+            return EEXIST;
+        }
+
+        write_lock_subtree(source_node, false);
+        hmap_remove(source_parent->map, source_name);
+        hmap_insert(target_parent->map, target_name, source_node);
+        source_node->parent = target_parent;
+        write_unlock(source_parent);
+        write_unlock_subtree(source_node, true);
+        write_unlock(target_parent);
+
+        return SUCCESS;
+    }
+
+    // (3) none of the above
+    Tree* target_parent = read_write_lock_path(tree, path_to_target_parent);
+    free(path_to_source_parent);
+    free(path_to_target_parent);
+    if (!target_parent) {
+        write_unlock(source_node);
+        write_unlock(source_parent);
+        return ENOENT;
+    }
+
+    // now we know that target_parent exists and is write_locked, thus, we can make operations on it
+    // first, we unlock its predecessors (other than him), so other processes can use them
+    if (target_parent->parent) read_unlock_predecessors(target_parent->parent);
+
+    if (hmap_get(target_parent->map, target_name)) {
+        write_unlock(source_node);
+        write_unlock(source_parent);
+        write_unlock(target_parent);
+        return ENOENT;
+    }
+
+    write_lock_subtree(source_node, false);
+    hmap_remove(source_parent->map, source_name);
+    hmap_insert(target_parent->map, target_name, source_node);
+    source_node->parent = target_parent;
+
+    write_unlock(source_parent);
+    write_unlock_subtree(source_node, true);
+    write_unlock(target_parent);
+
+    return SUCCESS;
+}
