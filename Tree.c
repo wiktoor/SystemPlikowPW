@@ -27,7 +27,7 @@ static void read_lock(Tree* tree) {
 }
 
 static void read_unlock(Tree* tree) {
-    pthread_mutex_unlock(&tree->mutex);
+    pthread_mutex_lock(&tree->mutex);
 
     if (--tree->working == 0) pthread_cond_signal(&tree->write_cond);
 
