@@ -154,8 +154,13 @@ static Tree* read_write_lock_path(Tree* tree, const char* path) {
     return read_write_lock_path(subtree, subpath);
 }
 
+static bool is_root(const char* path) {
+    return !strcmp("/", path);
+}
+
 int tree_create(Tree* tree, const char* path) {
     if (!is_path_valid(path)) return EINVAL;
+    if (is_root(path)) return EEXIST;
 
     char component[MAX_FOLDER_NAME_LENGTH + 1];
     char* path_to_parent = make_path_to_parent(path, component);
@@ -213,10 +218,6 @@ int tree_remove(Tree* tree, const char* path) {
     write_unlock(parent);
 
     return SUCCESS;
-}
-
-static bool is_root(const char* path) {
-    return !strcmp("/", path);
 }
 
 static bool is_successor(const char* path, const char* successor_path) {
@@ -309,7 +310,7 @@ int tree_move(Tree* tree, const char* source, const char* target) {
     if (!path_to_source_parent) return EBUSY; // we don't need to check that: we did that earlier
 
     Tree* source_parent = read_write_lock_path(tree, path_to_source_parent);
-    if (!source_parent) return ENOENT; // we don't need to check that: we did that earlier
+    if (!source_parent) return ENOENT;
 
     // now we know that source_parent exists and is write_locked, thus, we can make operations on it
     // first, we unlock its predecessors (other than him), so other processes can use them
@@ -327,8 +328,6 @@ int tree_move(Tree* tree, const char* source, const char* target) {
         return SUCCESS;
     }
     write_lock(source_node);
-
-    // kłopoty
 
     char target_name[MAX_FOLDER_NAME_LENGTH + 1];
     char* path_to_target_parent = make_path_to_parent(target, target_name);
@@ -410,7 +409,7 @@ int tree_move(Tree* tree, const char* source, const char* target) {
         write_unlock(source_node);
         write_unlock(source_parent);
         write_unlock(target_parent);
-        return ENOENT;
+        return EEXIST;
     }
 
     write_lock_subtree(source_node, false);
