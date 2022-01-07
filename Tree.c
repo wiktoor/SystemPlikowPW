@@ -14,7 +14,7 @@
 static void read_lock(Tree* tree) {
     pthread_mutex_lock(&tree->mutex);
 
-    if (tree->operation == WRITING || tree->write_wait) {
+    while (tree->operation == WRITING || tree->write_wait) {
         tree->read_wait++;
         pthread_cond_wait(&tree->read_cond, &tree->mutex);
         tree->read_wait--;
@@ -37,7 +37,7 @@ static void read_unlock(Tree* tree) {
 static void write_lock(Tree* tree) {
     pthread_mutex_lock(&tree->mutex);
 
-    if (tree->working) {
+    while (tree->working) {
         tree->write_wait++;
         pthread_cond_wait(&tree->write_cond, &tree->mutex);
         tree->write_wait--;
