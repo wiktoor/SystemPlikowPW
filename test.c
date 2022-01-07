@@ -35,32 +35,32 @@ void test_tree_move(Tree* tree, const char* source, const char* target) {
 int main() {
     Tree *tree = tree_new();
 
-    test_tree_create(tree, "/a/");
-    test_tree_create(tree, "/b/c/");
-    test_tree_create(tree, "/c/");
-    test_tree_create(tree, "/a/b/");
-    test_tree_create(tree, "/a/c/");
-    test_tree_create(tree, "/c/d/");
-
-    test_tree_list(tree, "/");
-    test_tree_list(tree, "/a/");
-    test_tree_list(tree, "/a/b/c/d/");
-
-    test_tree_remove(tree, "/a/");
-    test_tree_remove(tree, "/a/b/");
-
-    test_tree_list(tree, "/a/");
-    test_tree_list(tree, "/c/");
-
-    test_tree_move(tree, "/a/", "/c/");
-    test_tree_move(tree, "/a/", "/c/x/");
-
     // test_tree_create(tree, "/a/");
-    // test_tree_create(tree, "/a/a/");
-    // test_tree_create(tree, "/a/a/a/");
+    // test_tree_create(tree, "/b/c/");
+    // test_tree_create(tree, "/c/");
     // test_tree_create(tree, "/a/b/");
+    // test_tree_create(tree, "/a/c/");
+    // test_tree_create(tree, "/c/d/");
+
+    // test_tree_list(tree, "/");
+    // test_tree_list(tree, "/a/");
+    // test_tree_list(tree, "/a/b/c/d/");
+
+    // test_tree_remove(tree, "/a/");
+    // test_tree_remove(tree, "/a/b/");
+
+    // test_tree_list(tree, "/a/");
+    // test_tree_list(tree, "/c/");
+
+    // test_tree_move(tree, "/a/", "/d/");
+    // test_tree_move(tree, "/a/", "/c/x/");
+
+    test_tree_create(tree, "/a/");
+    test_tree_create(tree, "/a/a/");
+    test_tree_create(tree, "/a/a/a/");
+    test_tree_create(tree, "/a/b/");
     
-    // test_tree_move(tree, "/a/a/", "/a/b/a/");
+    test_tree_move(tree, "/a/a/", "/a/b/a/");
 
     tree_free(tree);
 }

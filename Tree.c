@@ -155,7 +155,7 @@ static Tree* read_write_lock_path(Tree* tree, const char* path) {
 }
 
 static bool is_root(const char* path) {
-    return !strcmp("/", path);
+    return !strcmp(path, "/");
 }
 
 int tree_create(Tree* tree, const char* path) {
@@ -292,6 +292,18 @@ static void write_unlock_subtree(Tree* tree, bool unlock_root) {
     if (unlock_root) write_unlock(tree);
 }
 
+static char* find_last_common_predecessor(const char* path1, const char* path2) {
+    size_t len1 = strlen(path1), len2 = strlen(path2);
+    size_t len = len1 < len2 ? len1 : len2;
+    size_t cnt = 0;
+    while (path1[cnt] == path2[cnt] && cnt < len) cnt++;
+    char* res = malloc(cnt + 1);
+    CHECK_PTR(res);
+    memcpy(res, path1, cnt);
+    res[cnt] = '\0';
+    return res;
+}
+
 int tree_move(Tree* tree, const char* source, const char* target) {
     if (!is_path_valid(source) || !is_path_valid(target)) return EINVAL;
 
@@ -304,122 +316,112 @@ int tree_move(Tree* tree, const char* source, const char* target) {
     // corner case for tests: if target is successor of source
     if (is_successor(source, target)) return -1;
 
-    // find the name of source folder and its parent
+    // important case
+    if (!strcmp(source, target)) {
+        Tree* source_node = read_lock_path(tree, source); // do we need to read_write lock it?
+        if (source_node) {
+            read_unlock_predecessors(source_node);
+            return SUCCESS;
+        }
+        else return ENOENT;
+    }
+
+    // important case
+    if (is_successor(target, source)) {
+        Tree* source_node = read_lock_path(tree, source); // do we need to read_write lock it?
+        if (source_node) {
+            read_unlock_predecessors(source_node);
+            return EEXIST;
+        }
+        else return ENOENT;
+    }
+
     char source_name[MAX_FOLDER_NAME_LENGTH + 1];
     char* path_to_source_parent = make_path_to_parent(source, source_name);
-    if (!path_to_source_parent) return EBUSY; // we don't need to check that: we did that earlier
-
-    Tree* source_parent = read_write_lock_path(tree, path_to_source_parent);
-    if (!source_parent) return ENOENT;
-
-    // now we know that source_parent exists and is write_locked, thus, we can make operations on it
-    // first, we unlock its predecessors (other than him), so other processes can use them
-    if (source_parent->parent) read_unlock_predecessors(source_parent->parent);
-
-    Tree* source_node = hmap_get(source_parent->map, source_name);
-    if (!source_node) {
-        free(path_to_source_parent);
-        write_unlock(source_parent);
-        return ENOENT;
-    }
-    else if (!strcmp(source, target)) { // we are moving the same node to the same place
-        free(path_to_source_parent);
-        write_unlock(source_parent);
-        return SUCCESS;
-    }
-    write_lock(source_node);
+    if (!path_to_source_parent) return EBUSY;
 
     char target_name[MAX_FOLDER_NAME_LENGTH + 1];
     char* path_to_target_parent = make_path_to_parent(target, target_name);
-    if (!path_to_target_parent) {
-        free(path_to_source_parent);
-        write_unlock(source_node);
-        write_unlock(source_parent);
+    if (!path_to_target_parent) return EEXIST;
+
+    // find lcp
+    char* lcp_path = find_last_common_predecessor(path_to_source_parent, path_to_target_parent);
+    Tree* lcp = read_write_lock_path(tree, lcp_path);
+    if (!lcp) {
+        free(lcp_path);
         return ENOENT;
     }
 
-    // we have three different scenarios:
-    // (1) source and target have same parent
-    if (!strcmp(path_to_source_parent, path_to_target_parent)) {
-        free(path_to_source_parent);
-        free(path_to_target_parent);
-        if (hmap_get(source_parent->map, target_name)) {
-            write_unlock(source_node);
-            write_unlock(source_parent);
-            return EEXIST;
-        }
-        write_lock_subtree(source_node, false); // we write_lock source_node's subtree (source_node excluded, because it's already write_locked)
-        hmap_remove(source_parent->map, source_name);
-        hmap_insert(source_parent->map, target_name, source_node);
-        write_unlock_subtree(source_node, true); // we write_unlock source_node's subtree (source_node included)
-        write_unlock(source_parent);
-        return SUCCESS;
-    }
+    if (lcp->parent) read_unlock_predecessors(lcp->parent);
 
-    // (2) target_parent is a successor of source_parent
-    if (is_successor(path_to_source_parent, path_to_target_parent)) {
-        char* relative_path = rest_path(path_to_source_parent, path_to_target_parent);
-        Tree* target_parent = read_write_lock_path_root_excluding(source_parent, relative_path, source_parent);
-        free(path_to_source_parent);
-        free(path_to_target_parent);
-        free(relative_path);
-        if (!target_parent) {
-            write_unlock(source_node);
-            write_unlock(source_parent);
-            return ENOENT;
-        }
+    // find source_parent
+    char* lcp_to_source_parent = rest_path(lcp_path, path_to_source_parent);
+    Tree* source_parent = strlen(lcp_to_source_parent) > 1 ? read_write_lock_path_root_excluding(lcp, lcp_to_source_parent, lcp) : lcp;
 
-        // now we know that target_parent exists and is write_locked, thus, we can make operations on it
-        // first, we unlock its predecessors until source_parent (other than him), so other processes can use them
-        if (target_parent->parent) read_unlock_predecessors_until_root(target_parent->parent, source_parent);
-
-        if (hmap_get(target_parent->map, target_name)) {
-            write_unlock(source_node);
-            write_unlock(source_parent);
-            write_unlock(target_parent);
-            return EEXIST;
-        }
-
-        write_lock_subtree(source_node, false);
-        hmap_remove(source_parent->map, source_name);
-        hmap_insert(target_parent->map, target_name, source_node);
-        source_node->parent = target_parent;
-        write_unlock(source_parent);
-        write_unlock_subtree(source_node, true);
-        write_unlock(target_parent);
-
-        return SUCCESS;
-    }
-
-    // (3) none of the above
-    Tree* target_parent = read_write_lock_path(tree, path_to_target_parent);
+    free(lcp_to_source_parent);
     free(path_to_source_parent);
+    if (!source_parent) {
+        free(lcp_path);
+        write_unlock(lcp);
+        return ENOENT;
+    }
+
+    if (source_parent != lcp && source_parent->parent) read_unlock_predecessors_until_root(source_parent->parent, lcp);
+
+    // find source_node
+    Tree* source_node = hmap_get(source_parent->map, source_name);
+    if (!source_node) {
+        free(lcp_path);
+        if (source_parent != lcp) write_unlock(source_parent);
+        write_unlock(lcp);
+        return ENOENT;
+    }
+    write_lock(source_node);
+
+    // if source and target are the same
+    if (!strcmp(source, target)) {
+        free(lcp_path);
+        write_unlock(source_node);
+        if (source_parent != lcp) write_unlock(source_parent);
+        write_unlock(lcp);
+        return SUCCESS;
+    }
+    
+    // find target parent
+    char* lcp_to_target_parent = rest_path(lcp_path, path_to_target_parent);
+    Tree* target_parent = strlen(lcp_to_target_parent) > 1 ? read_write_lock_path_root_excluding(lcp, lcp_to_target_parent, lcp) : lcp;
+    
+    free(lcp_path);
+    free(lcp_to_target_parent);
     free(path_to_target_parent);
     if (!target_parent) {
         write_unlock(source_node);
-        write_unlock(source_parent);
+        if (source_parent != lcp) write_unlock(source_parent);
+        write_unlock(lcp);
         return ENOENT;
     }
 
-    // now we know that target_parent exists and is write_locked, thus, we can make operations on it
-    // first, we unlock its predecessors (other than him), so other processes can use them
-    if (target_parent->parent) read_unlock_predecessors(target_parent->parent);
+    if (target_parent != lcp && target_parent->parent) read_unlock_predecessors_until_root(target_parent->parent, lcp);
 
+    // check if target already exists
     if (hmap_get(target_parent->map, target_name)) {
         write_unlock(source_node);
-        write_unlock(source_parent);
-        write_unlock(target_parent);
+        if (source_parent != lcp) write_unlock(source_parent);
+        if (target_parent != lcp) write_unlock(target_parent);
+        write_unlock(lcp);
         return EEXIST;
     }
 
+    // we're good to go
     write_lock_subtree(source_node, false);
     hmap_remove(source_parent->map, source_name);
     hmap_insert(target_parent->map, target_name, source_node);
     source_node->parent = target_parent;
 
-    write_unlock(source_parent);
     write_unlock_subtree(source_node, true);
-    write_unlock(target_parent);
+    if (source_parent != lcp) write_unlock(source_parent);
+    if (target_parent != lcp) write_unlock(target_parent);
+    write_unlock(lcp);
 
     return SUCCESS;
 }
