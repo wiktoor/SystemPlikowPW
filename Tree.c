@@ -14,13 +14,15 @@
 static void read_lock(Tree* tree) {
     pthread_mutex_lock(&tree->mutex);
 
-    while (tree->operation == WRITING || tree->write_wait) {
+    if (tree->write_wait || tree->write_count) {
         tree->read_wait++;
-        pthread_cond_wait(&tree->read_cond, &tree->mutex);
+        do {
+            pthread_cond_wait(&tree->read_cond, &tree->mutex);
+        } while (tree->write_count);
         tree->read_wait--;
     }
 
-    tree->working++;
+    tree->read_count++;
     pthread_cond_signal(&tree->read_cond);
 
     pthread_mutex_unlock(&tree->mutex);
@@ -29,7 +31,7 @@ static void read_lock(Tree* tree) {
 static void read_unlock(Tree* tree) {
     pthread_mutex_lock(&tree->mutex);
 
-    if (--tree->working == 0) pthread_cond_signal(&tree->write_cond);
+    if (--tree->read_count == 0) pthread_cond_signal(&tree->write_cond);
 
     pthread_mutex_unlock(&tree->mutex);
 }
@@ -37,14 +39,14 @@ static void read_unlock(Tree* tree) {
 static void write_lock(Tree* tree) {
     pthread_mutex_lock(&tree->mutex);
 
-    while (tree->working) {
+    while (tree->write_count || tree->read_count) {
         tree->write_wait++;
         pthread_cond_wait(&tree->write_cond, &tree->mutex);
         tree->write_wait--;
     }
 
     tree->operation = WRITING;
-    tree->working++;
+    tree->write_count++;
 
     pthread_mutex_unlock(&tree->mutex);
 }
@@ -53,7 +55,7 @@ static void write_unlock(Tree* tree) {
     pthread_mutex_lock(&tree->mutex);
 
     tree->operation = READING;
-    tree->working--;
+    tree->write_count--;
 
     if (tree->read_wait) pthread_cond_signal(&tree->read_cond);
     else pthread_cond_signal(&tree->write_cond);
@@ -78,7 +80,7 @@ Tree* tree_new() {
     pthread_cond_init(&result->read_cond, NULL);
     pthread_cond_init(&result->write_cond, NULL);
 
-    result->read_wait = result->write_wait = result->working = 0;
+    result->read_wait = result->write_wait = result->write_count = result->read_count = 0;
     result->operation = READING;
     result->parent = NULL;
 
