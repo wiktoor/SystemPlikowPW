@@ -217,9 +217,8 @@ int tree_remove(Tree* tree, const char* path) {
         return ENOENT;
     }
 
-    write_lock(node);
+    subtree_wait(node);
     if (hmap_size(node->map)) {
-        write_unlock(node);
         write_unlock(parent);
         if (parent->parent) read_unlock_predecessors(parent->parent);
         return ENOTEMPTY;
