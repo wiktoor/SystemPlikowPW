@@ -9,6 +9,8 @@ struct Tree {
     pthread_mutex_t mutex;
     pthread_cond_t read_cond, write_cond;
     size_t read_wait, write_wait, read_count, write_count;
+    size_t subtree_count;
+    pthread_cond_t subtree_cond;
     // pointer to the parent (or is set to NULL if this tree is the root)
     struct Tree* parent;
 };
