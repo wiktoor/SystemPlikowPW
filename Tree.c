@@ -390,12 +390,11 @@ int tree_move(Tree* tree, const char* source, const char* target) {
         if (lcp->parent) read_unlock_predecessors(lcp->parent);
         return ENOENT;
     }
-    write_lock(source_node);
+    subtree_wait(source_node);
 
     // if source and target are the same
     if (!strcmp(source, target)) {
         free(lcp_path);
-        write_unlock(source_node);
         if (source_parent != lcp) {
             write_unlock(source_parent);
             if (source_parent->parent) read_unlock_predecessors_until_root(source_parent->parent, lcp);
@@ -413,7 +412,6 @@ int tree_move(Tree* tree, const char* source, const char* target) {
     free(lcp_to_target_parent);
     free(path_to_target_parent);
     if (!target_parent) {
-        write_unlock(source_node);
         if (source_parent != lcp) {
             write_unlock(source_parent);
             if (source_parent->parent) read_unlock_predecessors_until_root(source_parent->parent, lcp);
@@ -425,7 +423,6 @@ int tree_move(Tree* tree, const char* source, const char* target) {
 
     // check if target already exists
     if (hmap_get(target_parent->map, target_name)) {
-        write_unlock(source_node);
         if (source_parent != lcp) {
             write_unlock(source_parent);
             if (source_parent->parent) read_unlock_predecessors_until_root(source_parent->parent, lcp);
@@ -440,12 +437,10 @@ int tree_move(Tree* tree, const char* source, const char* target) {
     }
 
     // we're good to go
-    write_lock_subtree(source_node, false);
     hmap_remove(source_parent->map, source_name);
     hmap_insert(target_parent->map, target_name, source_node);
     source_node->parent = target_parent;
 
-    write_unlock_subtree(source_node, true);
     if (source_parent != lcp) {
         write_unlock(source_parent);
         if (source_parent->parent) read_unlock_predecessors_until_root(source_parent->parent, lcp);
