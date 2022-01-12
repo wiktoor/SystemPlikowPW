@@ -125,12 +125,9 @@ char* tree_list(Tree* tree, const char* path) {
     Tree* node = read_lock_path(tree, path);
     if (!node) return NULL;
 
-    // now we know that the node exists and is read_locked, thus, we can make operations on it
-    // first, we unlock its predecessors (other than him), so other processes can use them
-    if (node->parent) read_unlock_predecessors(node->parent);
-
     char* result = make_map_contents_string(node->map);
     read_unlock(node);
+    if (node->parent) read_unlock_predecessors(node->parent);
     return result;
 }
 
@@ -169,13 +166,10 @@ int tree_create(Tree* tree, const char* path) {
     Tree* parent = read_write_lock_path(tree, path_to_parent);
     free(path_to_parent);
     if (!parent) return ENOENT;
-
-    // now we know that parent exists and is write_locked, thus, we can make operations on it
-    // first, we unlock its predecessors (other than him), so other processes can use them
-    if (parent->parent) read_unlock_predecessors(parent->parent);
     
     if (hmap_get(parent->map, component)) {
         write_unlock(parent);
+        if (parent->parent) read_unlock_predecessors(parent->parent);
         return EEXIST;
     }
 
@@ -184,6 +178,7 @@ int tree_create(Tree* tree, const char* path) {
     new->parent = parent;
 
     write_unlock(parent);
+    if (parent->parent) read_unlock_predecessors(parent->parent);
     return SUCCESS;
 }
 
@@ -196,14 +191,11 @@ int tree_remove(Tree* tree, const char* path) {
     Tree* parent = read_write_lock_path(tree, path_to_parent);
     free(path_to_parent);
     if (!parent) return ENOENT;
-    
-    // now we know that parent exists and is write_locked, thus, we can make operations on it
-    // first, we unlock its predecessors (other than him), so other processes can use them
-    if (parent->parent) read_unlock_predecessors(parent->parent);
 
     Tree* node = hmap_get(parent->map, component);
     if (!node) {
         write_unlock(parent);
+        if (parent->parent) read_unlock_predecessors(parent->parent);
         return ENOENT;
     }
 
@@ -211,6 +203,7 @@ int tree_remove(Tree* tree, const char* path) {
     if (hmap_size(node->map)) {
         write_unlock(node);
         write_unlock(parent);
+        if (parent->parent) read_unlock_predecessors(parent->parent);
         return ENOTEMPTY;
     }
 
@@ -218,6 +211,7 @@ int tree_remove(Tree* tree, const char* path) {
     tree_free(node);
 
     write_unlock(parent);
+    if (parent->parent) read_unlock_predecessors(parent->parent);
 
     return SUCCESS;
 }
@@ -354,8 +348,6 @@ int tree_move(Tree* tree, const char* source, const char* target) {
         return ENOENT;
     }
 
-    if (lcp->parent) read_unlock_predecessors(lcp->parent);
-
     // find source_parent
     char* lcp_to_source_parent = rest_path(lcp_path, path_to_source_parent);
     Tree* source_parent = strlen(lcp_to_source_parent) > 1 ? read_write_lock_path_root_excluding(lcp, lcp_to_source_parent, lcp) : lcp;
@@ -365,17 +357,20 @@ int tree_move(Tree* tree, const char* source, const char* target) {
     if (!source_parent) {
         free(lcp_path);
         write_unlock(lcp);
+        if (lcp->parent) read_unlock_predecessors(lcp->parent);
         return ENOENT;
     }
-
-    if (source_parent != lcp && source_parent->parent) read_unlock_predecessors_until_root(source_parent->parent, lcp);
 
     // find source_node
     Tree* source_node = hmap_get(source_parent->map, source_name);
     if (!source_node) {
         free(lcp_path);
-        if (source_parent != lcp) write_unlock(source_parent);
+        if (source_parent != lcp) {
+            write_unlock(source_parent);
+            if (source_parent->parent) read_unlock_predecessors_until_root(source_parent->parent, lcp);
+        }
         write_unlock(lcp);
+        if (lcp->parent) read_unlock_predecessors(lcp->parent);
         return ENOENT;
     }
     write_lock(source_node);
@@ -384,8 +379,12 @@ int tree_move(Tree* tree, const char* source, const char* target) {
     if (!strcmp(source, target)) {
         free(lcp_path);
         write_unlock(source_node);
-        if (source_parent != lcp) write_unlock(source_parent);
+        if (source_parent != lcp) {
+            write_unlock(source_parent);
+            if (source_parent->parent) read_unlock_predecessors_until_root(source_parent->parent, lcp);
+        }
         write_unlock(lcp);
+        if (lcp->parent) read_unlock_predecessors(lcp->parent);
         return SUCCESS;
     }
     
@@ -398,19 +397,28 @@ int tree_move(Tree* tree, const char* source, const char* target) {
     free(path_to_target_parent);
     if (!target_parent) {
         write_unlock(source_node);
-        if (source_parent != lcp) write_unlock(source_parent);
+        if (source_parent != lcp) {
+            write_unlock(source_parent);
+            if (source_parent->parent) read_unlock_predecessors_until_root(source_parent->parent, lcp);
+        }
         write_unlock(lcp);
+        if (lcp->parent) read_unlock_predecessors(lcp->parent);
         return ENOENT;
     }
-
-    if (target_parent != lcp && target_parent->parent) read_unlock_predecessors_until_root(target_parent->parent, lcp);
 
     // check if target already exists
     if (hmap_get(target_parent->map, target_name)) {
         write_unlock(source_node);
-        if (source_parent != lcp) write_unlock(source_parent);
-        if (target_parent != lcp) write_unlock(target_parent);
+        if (source_parent != lcp) {
+            write_unlock(source_parent);
+            if (source_parent->parent) read_unlock_predecessors_until_root(source_parent->parent, lcp);
+        }
+        if (target_parent != lcp) {
+            write_unlock(target_parent);
+            if (target_parent->parent) read_unlock_predecessors_until_root(target_parent->parent, lcp);
+        }
         write_unlock(lcp);
+        if (lcp->parent) read_unlock_predecessors(lcp->parent);
         return EEXIST;
     }
 
@@ -421,9 +429,16 @@ int tree_move(Tree* tree, const char* source, const char* target) {
     source_node->parent = target_parent;
 
     write_unlock_subtree(source_node, true);
-    if (source_parent != lcp) write_unlock(source_parent);
-    if (target_parent != lcp) write_unlock(target_parent);
+    if (source_parent != lcp) {
+        write_unlock(source_parent);
+        if (source_parent->parent) read_unlock_predecessors_until_root(source_parent->parent, lcp);
+    }
+    if (target_parent != lcp) {
+        write_unlock(target_parent);
+        if (target_parent->parent) read_unlock_predecessors_until_root(target_parent->parent, lcp);
+    }
     write_unlock(lcp);
+    if (lcp->parent) read_unlock_predecessors(lcp->parent);
 
     return SUCCESS;
 }
