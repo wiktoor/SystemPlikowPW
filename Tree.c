@@ -361,6 +361,8 @@ int tree_move(Tree* tree, const char* source, const char* target) {
     char* lcp_path = find_last_common_predecessor(path_to_source_parent, path_to_target_parent);
     Tree* lcp = read_write_lock_path(tree, lcp_path);
     if (!lcp) {
+        free(path_to_source_parent);
+        free(path_to_target_parent);
         free(lcp_path);
         return ENOENT;
     }
@@ -372,6 +374,7 @@ int tree_move(Tree* tree, const char* source, const char* target) {
     free(lcp_to_source_parent);
     free(path_to_source_parent);
     if (!source_parent) {
+        free(path_to_target_parent);
         free(lcp_path);
         write_unlock(lcp);
         if (lcp->parent) read_unlock_predecessors(lcp->parent);
@@ -381,6 +384,7 @@ int tree_move(Tree* tree, const char* source, const char* target) {
     // find source_node
     Tree* source_node = hmap_get(source_parent->map, source_name);
     if (!source_node) {
+        free(path_to_target_parent);
         free(lcp_path);
         if (source_parent != lcp) {
             write_unlock(source_parent);
