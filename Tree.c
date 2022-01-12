@@ -1,82 +1,82 @@
 #include <errno.h>
-
 #include "Tree.h"
 #include "HashMap.h"
 #include "path_utils.h"
+#include "err.h"
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h> // strlen, strcmp
-#include <stdio.h> // for test
 
-#define CHECK_PTR(x) do { if (!x) exit(0); } while(0)
+#define CHECK_PTR(x) do { if (!x) syserr("Error in malloc\n"); } while(0)
+#define CHECK_SYS_OP(op, name) do { if (op) syserr("Error in ", name, "\n"); } while(0)
 #define SUCCESS 0
 
 static void read_lock(Tree* tree) {
-    pthread_mutex_lock(&tree->mutex);
+    CHECK_SYS_OP(pthread_mutex_lock(&tree->mutex), "mutex lock");
 
     tree->subtree_count++;
 
     if (tree->write_wait || tree->write_count) {
         tree->read_wait++;
         do {
-            pthread_cond_wait(&tree->read_cond, &tree->mutex);
+            CHECK_SYS_OP(pthread_cond_wait(&tree->read_cond, &tree->mutex), "cond wait");
         } while (tree->write_count);
         tree->read_wait--;
     }
 
     tree->read_count++;
-    pthread_cond_signal(&tree->read_cond);
+    CHECK_SYS_OP(pthread_cond_signal(&tree->read_cond), "cond signal");
 
-    pthread_mutex_unlock(&tree->mutex);
+    CHECK_SYS_OP(pthread_mutex_unlock(&tree->mutex), "mutex unlock");
 }
 
 static void read_unlock(Tree* tree) {
-    pthread_mutex_lock(&tree->mutex);
+    CHECK_SYS_OP(pthread_mutex_lock(&tree->mutex), "mutex lock");
 
-    if (--tree->read_count == 0) pthread_cond_signal(&tree->write_cond);
+    if (--tree->read_count == 0) CHECK_SYS_OP(pthread_cond_signal(&tree->write_cond), "cond signal");
 
-    if (--tree->subtree_count <= 1) pthread_cond_signal(&tree->subtree_cond);
+    if (--tree->subtree_count <= 1) CHECK_SYS_OP(pthread_cond_signal(&tree->subtree_cond), "cond signal");
 
-    pthread_mutex_unlock(&tree->mutex);
+    CHECK_SYS_OP(pthread_mutex_unlock(&tree->mutex), "mutex unlock");
 }
 
 static void write_lock(Tree* tree) {
-    pthread_mutex_lock(&tree->mutex);
+    CHECK_SYS_OP(pthread_mutex_lock(&tree->mutex), "mutex lock");
 
     tree->subtree_count++;
 
     while (tree->write_count || tree->read_count) {
         tree->write_wait++;
-        pthread_cond_wait(&tree->write_cond, &tree->mutex);
+        CHECK_SYS_OP(pthread_cond_wait(&tree->write_cond, &tree->mutex), "cond wait");
         tree->write_wait--;
     }
 
     tree->write_count++;
 
-    pthread_mutex_unlock(&tree->mutex);
+    CHECK_SYS_OP(pthread_mutex_unlock(&tree->mutex), "mutex unlock");
 }
 
 static void write_unlock(Tree* tree) {
-    pthread_mutex_lock(&tree->mutex);
+    CHECK_SYS_OP(pthread_mutex_lock(&tree->mutex), "mutex lock");
 
     tree->write_count--;
+    
+    if (tree->read_wait) CHECK_SYS_OP(pthread_cond_signal(&tree->read_cond), "cond signal");
+    else CHECK_SYS_OP(pthread_cond_signal(&tree->write_cond), "cond signal");
+    
+    if (--tree->subtree_count <= 1) CHECK_SYS_OP(pthread_cond_signal(&tree->subtree_cond), "cond signal");
 
-    if (tree->read_wait) pthread_cond_signal(&tree->read_cond);
-    else pthread_cond_signal(&tree->write_cond);
-
-    if (--tree->subtree_count <= 1) pthread_cond_signal(&tree->subtree_cond);
-
-    pthread_mutex_unlock(&tree->mutex);
+    CHECK_SYS_OP(pthread_mutex_unlock(&tree->mutex), "mutex unlock");
 }
 
 static void subtree_wait(Tree* tree) {
-    pthread_mutex_lock(&tree->mutex);
-
+    CHECK_SYS_OP(pthread_mutex_lock(&tree->mutex), "mutex lock");
+    
     tree->subtree_count++;
-    while (tree->subtree_count > 1) pthread_cond_wait(&tree->subtree_cond, &tree->mutex);
+    while (tree->subtree_count > 1) CHECK_SYS_OP(pthread_cond_wait(&tree->subtree_cond, &tree->mutex), "cond wait");
     tree->subtree_count--;
 
-    pthread_mutex_unlock(&tree->mutex);
+    CHECK_SYS_OP(pthread_mutex_unlock(&tree->mutex), "mutex unlock");
 }
 
 // read_unlocks the tree and all its predecessors
@@ -92,10 +92,10 @@ Tree* tree_new() {
     result->map = hmap_new();
     CHECK_PTR(result->map);
 
-    pthread_mutex_init(&result->mutex, NULL);
-    pthread_cond_init(&result->read_cond, NULL);
-    pthread_cond_init(&result->write_cond, NULL);
-    pthread_cond_init(&result->subtree_cond, NULL);
+    CHECK_SYS_OP(pthread_mutex_init(&result->mutex, NULL), "mutex init");
+    CHECK_SYS_OP(pthread_cond_init(&result->read_cond, NULL), "cond init");
+    CHECK_SYS_OP(pthread_cond_init(&result->write_cond, NULL), "cond init");
+    CHECK_SYS_OP(pthread_cond_init(&result->subtree_cond, NULL), "cond init");
 
     result->read_wait = result->write_wait = result->write_count = result->read_count = 0;
     result->subtree_count = 0;
@@ -112,9 +112,10 @@ void tree_free(Tree *tree) {
         tree_free(value);
     }
     hmap_free(tree->map);
-    pthread_mutex_destroy(&tree->mutex);
-    pthread_cond_destroy(&tree->read_cond);
-    pthread_cond_destroy(&tree->write_cond);
+    CHECK_SYS_OP(pthread_mutex_destroy(&tree->mutex), "mutex destroy");
+    CHECK_SYS_OP(pthread_cond_destroy(&tree->read_cond), "cond destroy");
+    CHECK_SYS_OP(pthread_cond_destroy(&tree->write_cond), "cond destroy");
+    CHECK_SYS_OP(pthread_cond_destroy(&tree->subtree_cond), "cond destroy");
     free(tree);
 }
 
@@ -281,28 +282,6 @@ static Tree* read_write_lock_path_root_excluding(Tree* tree, const char* path, T
         return NULL;
     }
     return read_write_lock_path_root_excluding(subtree, subpath, root);
-}
-
-static void write_lock_subtree(Tree* tree, bool lock_root) {
-    if (lock_root) write_lock(tree);
-
-    const char* key = NULL;
-    void* value = NULL;
-    HashMapIterator it = hmap_iterator(tree->map);
-    while (hmap_next(tree->map, &it, &key, &value)) {
-        write_lock_subtree(value, true);
-    }
-}
-
-static void write_unlock_subtree(Tree* tree, bool unlock_root) {
-    const char* key = NULL;
-    void* value = NULL;
-    HashMapIterator it = hmap_iterator(tree->map);
-    while (hmap_next(tree->map, &it, &key, &value)) {
-        write_unlock_subtree(value, true);
-    }
-
-    if (unlock_root) write_unlock(tree);
 }
 
 static char* find_last_common_predecessor(const char* path1, const char* path2) {
