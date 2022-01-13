@@ -7,10 +7,50 @@
 #include <stdlib.h>
 #include <string.h> // strlen, strcmp
 
-#define CHECK_PTR(x) do { if (!x) syserr("Error in malloc\n"); } while(0)
-#define CHECK_SYS_OP(op, name) do { if (op) syserr("Error in ", name, "\n"); } while(0)
-#define SUCCESS 0
+struct Tree {
+    /* map of children of this tree */
+    HashMap* map; 
 
+    /* mutex that protects Tree's variables */
+    pthread_mutex_t mutex;
+
+    /* condition variables on which processes wait to read, write espectively */
+    pthread_cond_t read_cond, write_cond;
+
+    /* number of processes waiting to read and write, respectively */
+    size_t read_wait, write_wait;
+
+    /* number of processes reading and writing, respectively */
+    size_t read_count, write_count;
+
+    /* number of processes that work in this Tree's subtree (this tree including) */
+    size_t subtree_count;
+
+    /* condition variable on which processes wait until all processes in this Tree's subtree
+       finish their work */
+    pthread_cond_t subtree_cond;
+
+    /* pointer to the parent (or is set to NULL if this tree is the root) */
+    struct Tree* parent;
+};
+
+/* checks if malloc finished successfully. if it didn't, CHECK_PTR throws syserr */
+#define CHECK_PTR(x) do { if (!x) syserr("Error in malloc\n"); } while(0)
+
+/* checks if a system operation finished successfully. 
+   if it didn't, CHECK_SYS_OP throws syserr*/
+#define CHECK_SYS_OP(op, name) do { if (op) syserr("Error in ", name, "\n"); } while(0)
+
+/*
+    The way this program works is the following: any number of processes can read from
+    a node simultaneously, but only one can write to it at the same time. We obtain that
+    behaviour by using functions called read_lock, read_unlock, write_lock and write_unlock.
+
+    Sometimes it is necessary to wait until all processes in the subtree are finished. 
+    This is performed by the subtree_wait function.
+*/
+
+/* read_locks the node */
 static void read_lock(Tree* tree) {
     CHECK_SYS_OP(pthread_mutex_lock(&tree->mutex), "mutex lock");
 
@@ -24,12 +64,14 @@ static void read_lock(Tree* tree) {
         tree->read_wait--;
     }
 
+    /* cascade waking of other reading processes */
     tree->read_count++;
     CHECK_SYS_OP(pthread_cond_signal(&tree->read_cond), "cond signal");
 
     CHECK_SYS_OP(pthread_mutex_unlock(&tree->mutex), "mutex unlock");
 }
 
+/* read_unlocks the node */
 static void read_unlock(Tree* tree) {
     CHECK_SYS_OP(pthread_mutex_lock(&tree->mutex), "mutex lock");
 
@@ -40,6 +82,7 @@ static void read_unlock(Tree* tree) {
     CHECK_SYS_OP(pthread_mutex_unlock(&tree->mutex), "mutex unlock");
 }
 
+/* write_locks the node */
 static void write_lock(Tree* tree) {
     CHECK_SYS_OP(pthread_mutex_lock(&tree->mutex), "mutex lock");
 
@@ -56,6 +99,7 @@ static void write_lock(Tree* tree) {
     CHECK_SYS_OP(pthread_mutex_unlock(&tree->mutex), "mutex unlock");
 }
 
+/* write_unlocks the node */
 static void write_unlock(Tree* tree) {
     CHECK_SYS_OP(pthread_mutex_lock(&tree->mutex), "mutex lock");
 
@@ -69,6 +113,10 @@ static void write_unlock(Tree* tree) {
     CHECK_SYS_OP(pthread_mutex_unlock(&tree->mutex), "mutex unlock");
 }
 
+/* waits for all processes in the subtree to finish
+   note that in order to make this function work properly, 
+   we need to write_lock this tree's parent, so that other processes
+   cannot enter this node while someone is waiting for all processes to finish */
 static void subtree_wait(Tree* tree) {
     CHECK_SYS_OP(pthread_mutex_lock(&tree->mutex), "mutex lock");
     
@@ -79,7 +127,7 @@ static void subtree_wait(Tree* tree) {
     CHECK_SYS_OP(pthread_mutex_unlock(&tree->mutex), "mutex unlock");
 }
 
-// read_unlocks the tree and all its predecessors
+/* read_unlocks the tree and all its predecessors */
 static void read_unlock_predecessors(Tree* tree) {
     read_unlock(tree);
     if (tree->parent) read_unlock_predecessors(tree->parent);
@@ -119,8 +167,8 @@ void tree_free(Tree *tree) {
     free(tree);
 }
 
-// read_locks whole path, returns the node that the path points to
-// if such path doesn't exist, returns NULL and rollbacks all read_locks
+/* read_locks whole path, returns the node that the path points to
+   if such path doesn't exist, returns NULL and rollbacks all read_locks */
 static Tree* read_lock_path(Tree* tree, const char* path) {
     char component[MAX_FOLDER_NAME_LENGTH + 1];
     const char* subpath = path;
@@ -149,9 +197,9 @@ char* tree_list(Tree* tree, const char* path) {
     return result;
 }
 
-// read_locks whole path, except for the last node, which is write_locked
-// returns the node that the path points to
-// if such path doesn't exist, returns NULL and rollbacks all read_locks
+/* read_locks whole path, except for the last node, which is write_locked
+   returns the node that the path points to
+   if such path doesn't exist, returns NULL and rollbacks all read_locks */
 static Tree* read_write_lock_path(Tree* tree, const char* path) {
     char component[MAX_FOLDER_NAME_LENGTH + 1];
     const char* subpath = path;
@@ -171,6 +219,7 @@ static Tree* read_write_lock_path(Tree* tree, const char* path) {
     return read_write_lock_path(subtree, subpath);
 }
 
+/* returns if the path is path to root */
 static bool is_root(const char* path) {
     return !strcmp(path, "/");
 }
@@ -233,6 +282,7 @@ int tree_remove(Tree* tree, const char* path) {
     return SUCCESS;
 }
 
+/* returns true if the successor_path is a successor of path */
 static bool is_successor(const char* path, const char* successor_path) {
     size_t length = strlen(path);
     if (length >= strlen(successor_path)) return false;
@@ -245,6 +295,8 @@ static bool is_successor(const char* path, const char* successor_path) {
     return result;
 }
 
+/* returns the rest of the path, e.g. path = "/a/", successor_path = "/a/b/c/" 
+   then the result is "/b/c/", which is aa correct path if both arguments are correct paths */
 static char* rest_path(const char* path, const char* successor_path) {
     size_t path_length = strlen(path), successor_path_length = strlen(successor_path);
     size_t rest_path_length = successor_path_length - path_length + 1;
@@ -255,13 +307,16 @@ static char* rest_path(const char* path, const char* successor_path) {
     return result;
 }
 
-// read_unlocks the tree and all its predecessors
+/* read_unlocks the tree and all its predecessors */
 static void read_unlock_predecessors_until_root(Tree* tree, Tree* root) {
     if (tree == root) return;
     read_unlock(tree);
     if (tree->parent) read_unlock_predecessors_until_root(tree->parent, root);
 }
 
+/* read_locks whole path, except for the root and last node, which is write_locked
+   returns the node that the path points to
+   if such path doesn't exist, returns NULL and rollbacks all read_locks */
 static Tree* read_write_lock_path_root_excluding(Tree* tree, const char* path, Tree* root) {
     char component[MAX_FOLDER_NAME_LENGTH + 1];
     const char* subpath = path;
@@ -283,6 +338,8 @@ static Tree* read_write_lock_path_root_excluding(Tree* tree, const char* path, T
     return read_write_lock_path_root_excluding(subtree, subpath, root);
 }
 
+/* finds path to the last common predecessor of two paths
+   e.g. path1 = "/a/b/c/d/", path2 = "/a/b/e/" then the result is "/a/b/" */
 static char* find_last_common_predecessor(const char* path1, const char* path2) {
     size_t len1 = strlen(path1), len2 = strlen(path2);
     size_t len = len1 < len2 ? len1 : len2;
@@ -298,14 +355,14 @@ static char* find_last_common_predecessor(const char* path1, const char* path2) 
 int tree_move(Tree* tree, const char* source, const char* target) {
     if (!is_path_valid(source) || !is_path_valid(target)) return EINVAL;
 
-    // corner case for tests: if source == "/"
+    // if source == "/"
     if (is_root(source)) return EBUSY;
 
-    // corner case for tests: if target == "/"
+    // if target == "/"
     if (is_root(target)) return EEXIST;
 
-    // corner case for tests: if target is successor of source
-    if (is_successor(source, target)) return -1;
+    // if target is successor of source
+    if (is_successor(source, target)) return ESUCCESSOR;
 
     // important case
     if (!strcmp(source, target)) {
